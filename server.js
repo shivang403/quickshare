@@ -561,23 +561,34 @@ const OCEAN_SCRIPT = `
   });
 
   const oceanPalettes = [
-    {body:'#ffd166', stripe:'#073b4c', fin:'#ef476f'},
-    {body:'#4cc9f0', stripe:'#03045e', fin:'#ffd166'},
-    {body:'#ff7f50', stripe:'#4a2c2a', fin:'#ffd166'},
-    {body:'#90e0ef', stripe:'#0077b6', fin:'#f72585'},
-    {body:'#b5e48c', stripe:'#1b4332', fin:'#ffb703'}
+    {top:'#ffb703', bottom:'#fb8500', fin:'#e85d04', accent:'#f77f00'},   // yellow tang
+    {top:'#00b4d8', bottom:'#023e8a', fin:'#0077b6', accent:'#90e0ef'},   // blue surgeonfish
+    {top:'#e5383b', bottom:'#6a040f', fin:'#f48c06', accent:'#ffba08'},   // clownfish-ish red/orange
+    {top:'#2a9d8f', bottom:'#264653', fin:'#e9c46a', accent:'#f4a261'},   // parrotfish teal
+    {top:'#ffd60a', bottom:'#dda15e', fin:'#bc6c25', accent:'#606c38'}    // yellow/olive reef fish
   ];
-  const fishCount = Math.min(14, Math.max(8, Math.floor(W/110)));
+  const fishCount = Math.min(13, Math.max(7, Math.floor(W/130)));
   const fishes = [];
   for (let i=0;i<fishCount;i++){
     const depth = Math.random();
     fishes.push({
+      type: 'fish',
       x: Math.random()*W, y: H*0.15 + Math.random()*H*0.55,
       angle: Math.random()*Math.PI*2,
-      speed: 0.4 + Math.random()*0.5 + depth*0.3,
-      size: 14 + depth*16, depth,
+      speed: 0.35 + Math.random()*0.45 + depth*0.25,
+      size: 15 + depth*15, depth,
       palette: oceanPalettes[i % oceanPalettes.length],
       wiggle: Math.random()*10, turnBias: (Math.random()-0.5)*0.02, startle: 0, fleeAngle: 0
+    });
+  }
+  const sharkCount = W > 700 ? 2 : 1;
+  for (let i=0;i<sharkCount;i++){
+    fishes.push({
+      type: 'shark',
+      x: Math.random()*W, y: H*0.2 + Math.random()*H*0.35,
+      angle: Math.random()*Math.PI*2,
+      speed: 0.55 + Math.random()*0.25, size: 46 + Math.random()*16, depth: 0.15,
+      wiggle: Math.random()*10, turnBias: (Math.random()-0.5)*0.008, startle: 0, fleeAngle: 0
     });
   }
 
@@ -597,38 +608,150 @@ const OCEAN_SCRIPT = `
   }
   oceanCanvas.addEventListener('pointerdown', e => oceanTouch(e.clientX, e.clientY));
 
-  function drawFish(f){
+  function fishBodyPath(s){
+    octx.beginPath();
+    octx.moveTo(s*1.15, 0);
+    octx.quadraticCurveTo(s*0.95, -s*0.42, s*0.35, -s*0.5);
+    octx.quadraticCurveTo(-s*0.35, -s*0.48, -s*0.95, -s*0.18);
+    octx.quadraticCurveTo(-s*0.95, s*0.18, -s*0.35, s*0.48);
+    octx.quadraticCurveTo(s*0.35, s*0.5, s*0.95, s*0.42);
+    octx.closePath();
+  }
+
+  function drawTropicalFish(f){
     octx.save();
     octx.translate(f.x, f.y);
     const facing = Math.cos(f.angle) < 0 ? -1 : 1;
     octx.scale(facing, 1);
-    octx.globalAlpha = 0.55 + f.depth*0.45;
+    octx.globalAlpha = 0.6 + f.depth*0.4;
     const s = f.size;
-    const wag = Math.sin(f.wiggle) * 0.5;
+    const wag = Math.sin(f.wiggle) * 0.45;
+
+    // tail fin (forked), pivots at body rear
+    octx.save();
+    octx.translate(-s*0.95, 0);
+    octx.rotate(wag * 0.5);
     octx.fillStyle = f.palette.fin;
     octx.beginPath();
-    octx.moveTo(-s*0.9, 0);
-    octx.lineTo(-s*1.5, -s*0.5 + wag*s*0.3);
-    octx.lineTo(-s*1.5, s*0.5 + wag*s*0.3);
+    octx.moveTo(0, 0);
+    octx.quadraticCurveTo(-s*0.55, -s*0.55, -s*0.85, -s*0.12);
+    octx.quadraticCurveTo(-s*0.55, -s*0.05, -s*0.35, 0);
+    octx.quadraticCurveTo(-s*0.55, s*0.05, -s*0.85, s*0.12);
+    octx.quadraticCurveTo(-s*0.55, s*0.55, 0, 0);
     octx.closePath(); octx.fill();
-    octx.fillStyle = f.palette.body;
-    octx.beginPath(); octx.ellipse(0,0, s, s*0.55, 0, 0, Math.PI*2); octx.fill();
-    octx.strokeStyle = f.palette.stripe; octx.lineWidth = Math.max(1.5, s*0.12);
-    octx.beginPath(); octx.moveTo(-s*0.1, -s*0.5); octx.lineTo(-s*0.1, s*0.5); octx.stroke();
+    octx.restore();
+
+    // body with vertical gradient (countershading: lighter top, deeper color belly)
+    const grad = octx.createLinearGradient(0, -s*0.5, 0, s*0.5);
+    grad.addColorStop(0, f.palette.top);
+    grad.addColorStop(1, f.palette.bottom);
+    fishBodyPath(s);
+    octx.fillStyle = grad; octx.fill();
+    octx.lineWidth = Math.max(1, s*0.04);
+    octx.strokeStyle = 'rgba(0,0,0,0.15)'; octx.stroke();
+
+    // vertical accent bands (like a reef fish's stripes)
+    octx.save();
+    fishBodyPath(s); octx.clip();
+    octx.strokeStyle = f.palette.accent; octx.globalAlpha *= 0.55; octx.lineWidth = s*0.09;
+    for (const bx of [-s*0.4, 0, s*0.4]) { octx.beginPath(); octx.moveTo(bx, -s*0.5); octx.lineTo(bx, s*0.5); octx.stroke(); }
+    octx.restore();
+
+    // dorsal fin
     octx.fillStyle = f.palette.fin;
-    octx.beginPath(); octx.moveTo(-s*0.1, -s*0.5); octx.lineTo(s*0.1, -s*0.95); octx.lineTo(s*0.35, -s*0.45); octx.closePath(); octx.fill();
-    octx.fillStyle = '#fff'; octx.beginPath(); octx.arc(s*0.55, -s*0.08, s*0.14, 0, Math.PI*2); octx.fill();
-    octx.fillStyle = '#111'; octx.beginPath(); octx.arc(s*0.58, -s*0.08, s*0.07, 0, Math.PI*2); octx.fill();
+    octx.beginPath();
+    octx.moveTo(-s*0.15, -s*0.46); octx.quadraticCurveTo(s*0.05, -s*0.95, s*0.3, -s*0.4);
+    octx.quadraticCurveTo(s*0.05, -s*0.5, -s*0.15, -s*0.46);
+    octx.closePath(); octx.fill();
+
+    // pectoral fin
+    octx.beginPath();
+    octx.moveTo(s*0.15, s*0.15); octx.quadraticCurveTo(s*0.1, s*0.55, -s*0.15, s*0.35);
+    octx.quadraticCurveTo(s*0.0, s*0.25, s*0.15, s*0.15);
+    octx.closePath(); octx.globalAlpha *= 0.85; octx.fill(); octx.globalAlpha = 0.6 + f.depth*0.4;
+
+    // gill line
+    octx.strokeStyle = 'rgba(0,0,0,0.25)'; octx.lineWidth = s*0.03;
+    octx.beginPath(); octx.moveTo(s*0.55, -s*0.32); octx.quadraticCurveTo(s*0.48, 0, s*0.55, s*0.3); octx.stroke();
+
+    // eye
+    octx.fillStyle = '#fff'; octx.beginPath(); octx.arc(s*0.78, -s*0.06, s*0.11, 0, Math.PI*2); octx.fill();
+    octx.fillStyle = '#111'; octx.beginPath(); octx.arc(s*0.81, -s*0.06, s*0.055, 0, Math.PI*2); octx.fill();
     octx.restore();
   }
+
+  function drawShark(f){
+    octx.save();
+    octx.translate(f.x, f.y);
+    const facing = Math.cos(f.angle) < 0 ? -1 : 1;
+    octx.scale(facing, 1);
+    octx.globalAlpha = 0.5 + f.depth*0.5;
+    const s = f.size;
+    const wag = Math.sin(f.wiggle*0.6) * 0.3;
+
+    // tail (heterocercal: larger upper lobe)
+    octx.save();
+    octx.translate(-s*1.05, 0);
+    octx.rotate(wag * 0.35);
+    octx.fillStyle = '#5a6b73';
+    octx.beginPath();
+    octx.moveTo(0,0);
+    octx.quadraticCurveTo(-s*0.5, -s*0.75, -s*0.9, -s*0.55);
+    octx.quadraticCurveTo(-s*0.5, -s*0.15, -s*0.2, -s*0.05);
+    octx.quadraticCurveTo(-s*0.45, s*0.2, -s*0.65, s*0.4);
+    octx.quadraticCurveTo(-s*0.35, s*0.2, 0, 0);
+    octx.closePath(); octx.fill();
+    octx.restore();
+
+    // body: torpedo shape, countershaded gray
+    const grad = octx.createLinearGradient(0, -s*0.42, 0, s*0.42);
+    grad.addColorStop(0, '#7d8e96');
+    grad.addColorStop(0.55, '#4a5a61');
+    grad.addColorStop(1, '#d9e4e6');
+    octx.beginPath();
+    octx.moveTo(s*1.35, -s*0.02);
+    octx.quadraticCurveTo(s*1.1, -s*0.32, s*0.5, -s*0.4);
+    octx.quadraticCurveTo(-s*0.3, -s*0.42, -s*1.0, -s*0.14);
+    octx.quadraticCurveTo(-s*1.0, s*0.14, -s*0.3, s*0.36);
+    octx.quadraticCurveTo(s*0.5, s*0.4, s*1.1, s*0.15);
+    octx.quadraticCurveTo(s*1.3, s*0.06, s*1.35, -s*0.02);
+    octx.closePath();
+    octx.fillStyle = grad; octx.fill();
+
+    // dorsal fin (the iconic triangle)
+    octx.fillStyle = '#4a5a61';
+    octx.beginPath();
+    octx.moveTo(s*0.05, -s*0.38); octx.quadraticCurveTo(s*0.25, -s*0.95, s*0.5, -s*0.36);
+    octx.quadraticCurveTo(s*0.25, -s*0.42, s*0.05, -s*0.38);
+    octx.closePath(); octx.fill();
+
+    // pectoral fin
+    octx.beginPath();
+    octx.moveTo(s*0.35, s*0.1); octx.quadraticCurveTo(s*0.25, s*0.55, -s*0.15, s*0.3);
+    octx.quadraticCurveTo(s*0.1, s*0.25, s*0.35, s*0.1);
+    octx.closePath(); octx.globalAlpha *= 0.9; octx.fill(); octx.globalAlpha = 0.5 + f.depth*0.5;
+
+    // gill slits
+    octx.strokeStyle = 'rgba(0,0,0,0.3)'; octx.lineWidth = s*0.025;
+    for (const gx of [0.62, 0.72, 0.82]) { octx.beginPath(); octx.moveTo(s*gx, -s*0.22); octx.lineTo(s*(gx-0.03), s*0.05); octx.stroke(); }
+
+    // eye
+    octx.fillStyle = '#111'; octx.beginPath(); octx.arc(s*1.05, -s*0.1, s*0.045, 0, Math.PI*2); octx.fill();
+    octx.restore();
+  }
+
+  function drawFish(f){ f.type === 'shark' ? drawShark(f) : drawTropicalFish(f); }
 
   function oceanUpdate(){
     fishes.forEach(f => {
       f.wiggle += 0.25 + f.speed*0.1;
+      const isShark = f.type === 'shark';
       let steer = f.turnBias, speedMul = 1;
       if (f.startle > 0) {
-        f.startle--; f.angle = f.fleeAngle + (Math.random()-0.5)*0.3; speedMul = 2.4;
-      } else if (oceanPointer.active) {
+        f.startle--;
+        f.angle = f.fleeAngle + (Math.random()-0.5)*(isShark?0.12:0.3);
+        speedMul = isShark ? 1.4 : 2.4;
+      } else if (oceanPointer.active && !isShark) {
         const d = Math.hypot(f.x-oceanPointer.x, f.y-oceanPointer.y);
         if (d < 160 && d > 70) {
           const toP = Math.atan2(oceanPointer.y-f.y, oceanPointer.x-f.x);
@@ -637,6 +760,9 @@ const OCEAN_SCRIPT = `
         } else if (d <= 70) {
           f.startle = 40; f.fleeAngle = Math.atan2(f.y-oceanPointer.y, f.x-oceanPointer.x);
         }
+      } else if (oceanPointer.active && isShark) {
+        const d = Math.hypot(f.x-oceanPointer.x, f.y-oceanPointer.y);
+        if (d <= 90) { f.startle = 50; f.fleeAngle = Math.atan2(f.y-oceanPointer.y, f.x-oceanPointer.x); }
       }
       f.angle += steer + (Math.random()-0.5)*0.03;
       const spd = f.speed * speedMul;
@@ -688,11 +814,15 @@ function renderPage({ id, expiresAt, isOwner, hasPin }) {
   body { margin:0;font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:var(--text);min-height:100vh;overflow-x:hidden;background:#013a63; }
   #ocean { position:fixed;inset:0;z-index:0; }
   #oceanCanvas { position:fixed;inset:0;width:100%;height:100%;z-index:0; }
-  .wrap { position:relative;z-index:1;padding:16px;max-width:460px;margin:0 auto; }
-  .topbar { display:flex;justify-content:space-between;align-items:center;padding:6px 0; }
-  .toggle-btn,.link-btn { background:var(--card-bg);border:1px solid var(--card-border);color:var(--text);border-radius:999px;padding:8px 14px;cursor:pointer;font-size:13px;text-decoration:none; }
-  .box { background:var(--card-bg);border:1px solid var(--card-border);backdrop-filter:blur(10px);border-radius:18px;padding:22px;margin:14px 0;box-shadow:0 8px 24px rgba(0,0,0,.15); }
-  h1 { font-size:18px;margin:0 0 14px;display:flex;align-items:center;gap:8px; }
+  .wrap { position:relative;z-index:1;padding:24px 32px 60px;max-width:1200px;margin:0 auto; }
+  .topbar { display:flex;justify-content:space-between;align-items:center;padding:6px 0 20px; }
+  .brand { font-size:20px;font-weight:800;letter-spacing:-0.02em;display:flex;align-items:center;gap:8px; }
+  .toggle-btn,.link-btn { background:var(--card-bg);border:1px solid var(--card-border);color:var(--text);border-radius:999px;padding:9px 16px;cursor:pointer;font-size:13px;text-decoration:none;backdrop-filter:blur(8px); }
+  .grid { display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:24px;align-items:start; }
+  .col { display:flex;flex-direction:column;gap:24px; }
+  @media (max-width:860px) { .grid { grid-template-columns:1fr; } .wrap { padding:16px 16px 50px; } }
+  .box { background:var(--card-bg);border:1px solid var(--card-border);backdrop-filter:blur(14px);border-radius:20px;padding:26px;box-shadow:0 12px 32px rgba(0,0,0,.18); }
+  h1 { font-size:17px;margin:0 0 16px;display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:-0.01em; }
   .badge { display:inline-block;background:rgba(72,202,228,.2);color:var(--accent2);padding:4px 12px;border-radius:999px;font-size:12px;margin-bottom:10px; }
   #qrcode { display:flex;justify-content:center;margin:10px 0; }
   #qrcode img, #qrcode canvas { border-radius:10px;background:#fff;padding:8px; }
@@ -722,54 +852,63 @@ function renderPage({ id, expiresAt, isOwner, hasPin }) {
 <canvas id="oceanCanvas"></canvas>
 <div class="wrap">
   <div class="topbar">
-    <a class="link-btn" href="/">🔄 New room</a>
-    <button class="toggle-btn" id="themeToggle">🌙 Dark</button>
+    <div class="brand">🌊 QuickShare</div>
+    <div style="display:flex;gap:10px;">
+      <a class="link-btn" href="/">🔄 New room</a>
+      <button class="toggle-btn" id="themeToggle">🌙 Dark</button>
+    </div>
   </div>
 
-  <div class="box" id="keyWarningBox" style="display:none;">
+  <div class="box" id="keyWarningBox" style="display:none;margin-bottom:20px;">
     <div class="warn">⚠️ This link is missing its encryption key, so files here can't be decrypted on this device. Ask the room owner to re-share the QR code or full link.</div>
   </div>
 
-  <div class="box">
-    <div class="badge">Room ${id} ${hasPin ? '· 🔒 PIN protected' : ''}</div>
-    <h1>📱 Scan to join this room</h1>
-    <div id="qrcode"></div>
-    <p class="url" id="shareUrl"></p>
-    <div class="timer" id="timer">Expires in --:--:--</div>
-    <p style="font-size:12px;color:var(--text-dim);text-align:center;">🔐 End-to-end encrypted — the server never sees your files' content or names.</p>
-  </div>
+  <div class="grid">
+    <div class="col">
+      <div class="box">
+        <div class="badge">Room ${id} ${hasPin ? '· 🔒 PIN protected' : ''}</div>
+        <h1>📱 Scan to join this room</h1>
+        <div id="qrcode"></div>
+        <p class="url" id="shareUrl"></p>
+        <div class="timer" id="timer">Expires in --:--:--</div>
+        <p style="font-size:12px;color:var(--text-dim);text-align:center;">🔐 End-to-end encrypted — the server never sees your files' content or names.</p>
+      </div>
 
-  ${isOwner ? `
-  <div class="box">
-    <h1>🛠️ Room settings (owner)</h1>
-    <p style="font-size:13px;color:var(--text-dim);margin-top:-8px;">Set a PIN so only people who know it can open this room, even with the link.</p>
-    <input type="password" id="pinInput" placeholder="Set PIN (leave empty to remove)" maxlength="12" />
-    <button class="btn" id="savePin">Save PIN</button>
-    <h1 style="margin-top:20px;">👥 Connected devices</h1>
-    <div id="deviceList"><p class="empty">No devices yet</p></div>
-  </div>` : ''}
-
-  <div class="box">
-    <h1>📋 Shared clipboard</h1>
-    <textarea id="clip" placeholder="Type or paste text here, then Save. The other device can Copy it."></textarea>
-    <div class="row">
-      <button class="btn" id="saveClip">💾 Save</button>
-      <button class="btn secondary" id="copyClip">📄 Copy</button>
+      ${isOwner ? `
+      <div class="box">
+        <h1>🛠️ Room settings (owner)</h1>
+        <p style="font-size:13px;color:var(--text-dim);margin-top:-8px;">Set a PIN so only people who know it can open this room, even with the link.</p>
+        <input type="password" id="pinInput" placeholder="Set PIN (leave empty to remove)" maxlength="12" />
+        <button class="btn" id="savePin">Save PIN</button>
+        <h1 style="margin-top:20px;">👥 Connected devices</h1>
+        <div id="deviceList"><p class="empty">No devices yet</p></div>
+      </div>` : ''}
     </div>
-  </div>
 
-  <div class="box">
-    <h1>⬆️ Send files</h1>
-    <div class="dropzone" id="dropzone">
-      📥 Drag & drop files here, or click to browse
-      <input type="file" id="fileInput" multiple hidden />
+    <div class="col">
+      <div class="box">
+        <h1>📋 Shared clipboard</h1>
+        <textarea id="clip" placeholder="Type or paste text here, then Save. The other device can Copy it."></textarea>
+        <div class="row">
+          <button class="btn" id="saveClip">💾 Save</button>
+          <button class="btn secondary" id="copyClip">📄 Copy</button>
+        </div>
+      </div>
+
+      <div class="box">
+        <h1>⬆️ Send files</h1>
+        <div class="dropzone" id="dropzone">
+          📥 Drag & drop files here, or click to browse
+          <input type="file" id="fileInput" multiple hidden />
+        </div>
+        <p id="uploadStatus" style="font-size:12px;color:var(--text-dim);text-align:center;margin-top:8px;"></p>
+      </div>
+
+      <div class="box">
+        <h1>⬇️ Files in this room</h1>
+        <ul id="filelist"><li class="empty">Loading...</li></ul>
+      </div>
     </div>
-    <p id="uploadStatus" style="font-size:12px;color:var(--text-dim);text-align:center;margin-top:8px;"></p>
-  </div>
-
-  <div class="box">
-    <h1>⬇️ Files in this room</h1>
-    <ul id="filelist"><li class="empty">Loading...</li></ul>
   </div>
 </div>
 
