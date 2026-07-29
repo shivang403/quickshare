@@ -11,10 +11,12 @@ app.use(express.json({ limit: '1mb' }));
 
 const PORT = process.env.PORT || 3000;
 const ROOMS_DIR = path.join(os.tmpdir(), 'quickshare-rooms');
+const GLOBAL_DIR = path.join(os.tmpdir(), 'quickshare-global');
 const ROOM_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 const STALE_DEVICE_MS = 20 * 1000;
 
 if (!fs.existsSync(ROOMS_DIR)) fs.mkdirSync(ROOMS_DIR, { recursive: true });
+if (!fs.existsSync(GLOBAL_DIR)) fs.mkdirSync(GLOBAL_DIR, { recursive: true });
 
 setInterval(() => {
   for (const room of fs.readdirSync(ROOMS_DIR)) {
@@ -78,8 +80,122 @@ function labelFromUA(ua) {
   return `${browser} on ${osName}`;
 }
 
+// ================= SITE-WIDE ADMIN + APPROVAL GATE =================
+const ADMIN_FILE = path.join(GLOBAL_DIR, 'admin.json');
+const GLOBAL_DEVICES_FILE = path.join(GLOBAL_DIR, 'devices.json');
+
+function initAdmin() {
+  if (fs.existsSync(ADMIN_FILE)) return readJson(ADMIN_FILE, {});
+  const password = process.env.ADMIN_PASSWORD || crypto.randomBytes(4).toString('hex');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  const admin = { salt, hash, adminToken: crypto.randomBytes(16).toString('hex') };
+  writeJson(ADMIN_FILE, admin);
+  if (!process.env.ADMIN_PASSWORD) {
+    console.log('\n================================================');
+    console.log(' No ADMIN_PASSWORD set. Generated one for you:');
+    console.log(' Admin password: ' + password);
+    console.log(' Log in at /admin — change it there once logged in.');
+    console.log('================================================\n');
+  }
+  return admin;
+}
+const adminState = initAdmin();
+function getAdmin() { return readJson(ADMIN_FILE, adminState); }
+function isAdminReq(req) {
+  const admin = getAdmin();
+  return req.cookies['qs_admin'] === admin.adminToken;
+}
+function getGlobalDevices() { return readJson(GLOBAL_DEVICES_FILE, {}); }
+function saveGlobalDevices(d) { writeJson(GLOBAL_DEVICES_FILE, d); }
+
+function siteGate(req, res, next) {
+  if (isAdminReq(req)) return next(); // owner always allowed
+  let deviceId = req.cookies['qs_site_device'];
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    res.cookie('qs_site_device', deviceId, { httpOnly: true, sameSite: 'lax', maxAge: 365 * 24 * 60 * 60 * 1000 });
+  }
+  const devices = getGlobalDevices();
+  let entry = devices[deviceId];
+  if (!entry) {
+    entry = { status: 'pending', label: labelFromUA(req.headers['user-agent']), ip: req.ip, firstSeen: Date.now() };
+  }
+  entry.lastSeen = Date.now();
+  devices[deviceId] = entry;
+  saveGlobalDevices(devices);
+
+  if (entry.status === 'blocked') return res.send(renderBlockedPage());
+  if (entry.status === 'approved') return next();
+  res.cookie('qs_pending_dest', req.originalUrl, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 1000 });
+  return res.send(renderPendingPage());
+}
+
+app.get('/site-status', (req, res) => {
+  const deviceId = req.cookies['qs_site_device'];
+  const devices = getGlobalDevices();
+  const entry = devices[deviceId];
+  res.json({ status: entry ? entry.status : 'pending' });
+});
+
+app.get('/admin', (req, res) => {
+  if (!isAdminReq(req)) return res.send(renderAdminLogin());
+  res.send(renderAdminDashboard());
+});
+
+app.post('/admin/login', (req, res) => {
+  const admin = getAdmin();
+  const password = req.body.password || '';
+  const hash = crypto.scryptSync(password, admin.salt, 64).toString('hex');
+  if (hash === admin.hash) {
+    res.cookie('qs_admin', admin.adminToken, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
+    return res.json({ ok: true });
+  }
+  res.status(401).json({ ok: false });
+});
+
+app.post('/admin/change-password', (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ ok: false });
+  const admin = getAdmin();
+  const oldHash = crypto.scryptSync(req.body.oldPassword || '', admin.salt, 64).toString('hex');
+  if (oldHash !== admin.hash) return res.status(401).json({ ok: false, error: 'Wrong current password' });
+  const newPassword = (req.body.newPassword || '').trim();
+  if (!newPassword) return res.status(400).json({ ok: false, error: 'New password required' });
+  admin.salt = crypto.randomBytes(16).toString('hex');
+  admin.hash = crypto.scryptSync(newPassword, admin.salt, 64).toString('hex');
+  admin.adminToken = crypto.randomBytes(16).toString('hex');
+  writeJson(ADMIN_FILE, admin);
+  res.cookie('qs_admin', admin.adminToken, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
+  res.json({ ok: true });
+});
+
+app.get('/admin/devices', (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json([]);
+  const devices = getGlobalDevices();
+  res.json(Object.entries(devices).map(([deviceId, d]) => ({ deviceId, ...d })));
+});
+
+app.post('/admin/approve', (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ ok: false });
+  const devices = getGlobalDevices();
+  if (devices[req.body.deviceId]) { devices[req.body.deviceId].status = 'approved'; saveGlobalDevices(devices); }
+  res.json({ ok: true });
+});
+app.post('/admin/block', (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ ok: false });
+  const devices = getGlobalDevices();
+  if (devices[req.body.deviceId]) { devices[req.body.deviceId].status = 'blocked'; saveGlobalDevices(devices); }
+  res.json({ ok: true });
+});
+app.post('/admin/unblock', (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ ok: false });
+  const devices = getGlobalDevices();
+  if (devices[req.body.deviceId]) { devices[req.body.deviceId].status = 'approved'; saveGlobalDevices(devices); }
+  res.json({ ok: true });
+});
+
 // ---------- room creation ----------
-app.get('/', (req, res) => {
+app.get('/', siteGate, (req, res) => {
   const id = newRoomId();
   ensureRoom(id);
   const meta = getMeta(id);
@@ -89,7 +205,7 @@ app.get('/', (req, res) => {
   res.redirect(`/r/${id}`);
 });
 
-app.get('/r/:id', (req, res) => {
+app.get('/r/:id', siteGate, (req, res) => {
   const { id } = req.params;
   if (!isValidRoom(id)) return res.status(404).send('Room not found');
   ensureRoom(id);
@@ -123,13 +239,13 @@ app.post('/r/:id/owner/set-pin', (req, res) => {
   } else {
     meta.pinSalt = crypto.randomBytes(16).toString('hex');
     meta.pinHash = crypto.scryptSync(pin, meta.pinSalt, 64).toString('hex');
-    meta.pinAccessToken = crypto.randomBytes(16).toString('hex'); // invalidates old sessions
+    meta.pinAccessToken = crypto.randomBytes(16).toString('hex');
   }
   writeJson(metaPath(id), meta);
   res.json({ ok: true });
 });
 
-// ---------- device presence ----------
+// ---------- device presence (per room) ----------
 app.post('/r/:id/presence', (req, res) => {
   const { id } = req.params;
   ensureRoom(id);
@@ -216,17 +332,128 @@ app.post('/r/:id/clipboard', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- pages ----------
-function renderPinGate(id) {
-  return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>QuickShare - Enter PIN</title>
+// ================= PAGES =================
+function pageShell(title, bodyHtml) {
+  return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
   <style>
-    body{font-family:-apple-system,Arial,sans-serif;background:#012a4a;color:#eaf4ff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
-    .box{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.25);border-radius:18px;padding:28px;max-width:340px;width:90%;text-align:center;}
-    input{width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.08);color:#fff;font-size:16px;margin:14px 0;box-sizing:border-box;text-align:center;letter-spacing:4px;}
-    button{width:100%;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#48cae4,#90e0ef);color:#012a4a;font-weight:700;font-size:15px;cursor:pointer;}
-    .err{color:#ff8fa3;font-size:13px;height:16px;}
-  </style></head><body>
+    body{font-family:-apple-system,Arial,sans-serif;background:#012a4a;color:#eaf4ff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;}
+    .box{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.25);border-radius:18px;padding:28px;max-width:360px;width:100%;text-align:center;}
+    input{width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.08);color:#fff;font-size:15px;margin:10px 0;box-sizing:border-box;}
+    button{width:100%;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#48cae4,#90e0ef);color:#012a4a;font-weight:700;font-size:15px;cursor:pointer;margin-top:6px;}
+    .err{color:#ff8fa3;font-size:13px;min-height:16px;}
+  </style></head><body>${bodyHtml}</body></html>`;
+}
+
+function renderPendingPage() {
+  return pageShell('Waiting for approval', `
+  <div class="box">
+    <h2>⏳ Waiting for approval</h2>
+    <p style="color:#a9c6de;font-size:14px;">The site owner needs to approve your device before you can use QuickShare. This page will continue automatically once approved.</p>
+  </div>
+  <script>
+    async function poll(){
+      const res = await fetch('/site-status');
+      const data = await res.json();
+      if (data.status === 'approved') location.reload();
+      else if (data.status === 'blocked') location.reload();
+      else setTimeout(poll, 3000);
+    }
+    poll();
+  </script>`);
+}
+
+function renderBlockedPage() {
+  return pageShell('Blocked', `<div class="box"><h2>🚫 Access blocked</h2><p style="color:#a9c6de;font-size:14px;">The site owner has blocked this device from using QuickShare.</p></div>`);
+}
+
+function renderAdminLogin() {
+  return pageShell('Admin login', `
+  <div class="box">
+    <h2>🔑 Admin login</h2>
+    <input id="password" type="password" placeholder="Admin password" autofocus />
+    <div class="err" id="err"></div>
+    <button id="go">Log in</button>
+  </div>
+  <script>
+    async function submit(){
+      const password = document.getElementById('password').value;
+      const res = await fetch('/admin/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
+      if (res.ok) location.reload(); else document.getElementById('err').textContent = 'Wrong password';
+    }
+    document.getElementById('go').onclick = submit;
+    document.getElementById('password').addEventListener('keydown', e => { if (e.key==='Enter') submit(); });
+  </script>`);
+}
+
+function renderAdminDashboard() {
+  return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin - QuickShare</title>
+  <style>
+    body{font-family:-apple-system,Arial,sans-serif;background:#012a4a;color:#eaf4ff;margin:0;padding:20px;}
+    .wrap{max-width:640px;margin:0 auto;}
+    .box{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:16px;padding:18px;margin:14px 0;}
+    h1{font-size:18px;} h2{font-size:15px;color:#90e0ef;margin-bottom:10px;}
+    .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.1);font-size:14px;gap:10px;}
+    .row:last-child{border-bottom:none;}
+    .meta{color:#a9c6de;font-size:12px;}
+    button{border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;font-weight:600;}
+    .approve{background:#48cae4;color:#012a4a;} .block{background:#ef476f;color:#fff;} .unblock{background:#ffd166;color:#333;}
+    input{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.08);color:#fff;margin-right:6px;}
+    .empty{color:#a9c6de;font-size:13px;}
+  </style></head><body><div class="wrap">
+  <h1>🛠️ QuickShare Admin</h1>
+
+  <div class="box">
+    <h2>⏳ Pending approval</h2>
+    <div id="pending"><p class="empty">Loading...</p></div>
+  </div>
+  <div class="box">
+    <h2>✅ Approved devices</h2>
+    <div id="approved"><p class="empty">Loading...</p></div>
+  </div>
+  <div class="box">
+    <h2>🚫 Blocked devices</h2>
+    <div id="blocked"><p class="empty">Loading...</p></div>
+  </div>
+  <div class="box">
+    <h2>Change admin password</h2>
+    <input id="oldPw" type="password" placeholder="Current password" />
+    <input id="newPw" type="password" placeholder="New password" />
+    <button class="approve" id="changePw">Update</button>
+    <div id="pwMsg" style="font-size:13px;margin-top:8px;"></div>
+  </div>
+  </div>
+  <script>
+    function fmt(t){ return t ? new Date(t).toLocaleTimeString() : '-'; }
+    async function load(){
+      const res = await fetch('/admin/devices');
+      const devices = await res.json();
+      const pending = devices.filter(d=>d.status==='pending');
+      const approved = devices.filter(d=>d.status==='approved');
+      const blocked = devices.filter(d=>d.status==='blocked');
+      document.getElementById('pending').innerHTML = pending.length ? pending.map(d=>row(d,['approve','block'])).join('') : '<p class="empty">None</p>';
+      document.getElementById('approved').innerHTML = approved.length ? approved.map(d=>row(d,['block'])).join('') : '<p class="empty">None</p>';
+      document.getElementById('blocked').innerHTML = blocked.length ? blocked.map(d=>row(d,['unblock'])).join('') : '<p class="empty">None</p>';
+    }
+    function row(d, actions){
+      const btns = actions.map(a => '<button class="'+a+'" onclick="act(\\''+a+'\\',\\''+d.deviceId+'\\')">'+a[0].toUpperCase()+a.slice(1)+'</button>').join(' ');
+      return '<div class="row"><div>'+d.label+'<div class="meta">'+ (d.ip||'') +' · last seen '+fmt(d.lastSeen)+'</div></div><div>'+btns+'</div></div>';
+    }
+    window.act = async (action, deviceId) => {
+      await fetch('/admin/'+action, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId})});
+      load();
+    };
+    document.getElementById('changePw').onclick = async () => {
+      const oldPassword = document.getElementById('oldPw').value, newPassword = document.getElementById('newPw').value;
+      const res = await fetch('/admin/change-password', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({oldPassword,newPassword})});
+      const data = await res.json();
+      document.getElementById('pwMsg').textContent = data.ok ? '✅ Password updated' : ('❌ ' + (data.error||'Failed'));
+    };
+    load(); setInterval(load, 4000);
+  </script></body></html>`;
+}
+
+function renderPinGate(id) {
+  return pageShell('Enter PIN', `
   <div class="box">
     <h2>🔒 This room is locked</h2>
     <p style="color:#a9c6de;font-size:14px;">Enter the PIN to continue</p>
@@ -242,9 +469,204 @@ function renderPinGate(id) {
     }
     document.getElementById('go').onclick = submit;
     document.getElementById('pin').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
-  </script>
-  </body></html>`;
+  </script>`);
 }
+
+const OCEAN_SCRIPT = `
+  // ===== Interactive coral reef background =====
+  const oceanCanvas = document.getElementById('oceanCanvas');
+  const octx = oceanCanvas.getContext('2d');
+  let W = oceanCanvas.width = window.innerWidth;
+  let H = oceanCanvas.height = window.innerHeight;
+  let bgCanvas = document.createElement('canvas');
+  let bgCtx = bgCanvas.getContext('2d');
+
+  function drawBackground(){
+    bgCanvas.width = W; bgCanvas.height = H;
+    const grad = bgCtx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0, '#0a6ea8');
+    grad.addColorStop(0.55, '#0d5c96');
+    grad.addColorStop(1, '#e8d9a8');
+    bgCtx.fillStyle = grad; bgCtx.fillRect(0,0,W,H);
+
+    bgCtx.save();
+    bgCtx.globalAlpha = 0.10;
+    for (let i=0;i<5;i++){
+      const x = (i/5)*W + 40;
+      bgCtx.beginPath();
+      bgCtx.moveTo(x, 0); bgCtx.lineTo(x+120, 0);
+      bgCtx.lineTo(x-60, H*0.7); bgCtx.lineTo(x-180, H*0.7);
+      bgCtx.closePath(); bgCtx.fillStyle = '#ffffff'; bgCtx.fill();
+    }
+    bgCtx.restore();
+
+    const sandTop = H*0.82;
+    bgCtx.fillStyle = '#e8d9a8';
+    bgCtx.beginPath(); bgCtx.moveTo(0, sandTop);
+    for (let x=0;x<=W;x+=40) bgCtx.lineTo(x, sandTop + Math.sin(x*0.02)*8);
+    bgCtx.lineTo(W,H); bgCtx.lineTo(0,H); bgCtx.closePath(); bgCtx.fill();
+
+    function branchCoral(x,y,color,scale){
+      bgCtx.strokeStyle = color; bgCtx.lineWidth = 4*scale; bgCtx.lineCap='round';
+      function branch(x1,y1,angle,len,depth){
+        if (depth<=0) return;
+        const x2 = x1 + Math.cos(angle)*len, y2 = y1 + Math.sin(angle)*len;
+        bgCtx.beginPath(); bgCtx.moveTo(x1,y1); bgCtx.lineTo(x2,y2); bgCtx.stroke();
+        branch(x2,y2, angle - 0.4 - Math.random()*0.2, len*0.72, depth-1);
+        branch(x2,y2, angle + 0.4 + Math.random()*0.2, len*0.72, depth-1);
+      }
+      branch(x,y,-Math.PI/2, 32*scale, 4);
+    }
+    function fanCoral(x,y,color,scale){
+      bgCtx.fillStyle = color; bgCtx.globalAlpha = 0.85;
+      bgCtx.beginPath();
+      for (let a=-1.1;a<=1.1;a+=0.15){
+        const r = 40*scale*(0.85+0.15*Math.sin(a*5));
+        bgCtx.lineTo(x + Math.cos(a-Math.PI/2)*r, y + Math.sin(a-Math.PI/2)*r);
+      }
+      bgCtx.closePath(); bgCtx.fill(); bgCtx.globalAlpha = 1;
+    }
+    function brainCoral(x,y,color,scale){
+      bgCtx.fillStyle = color;
+      bgCtx.beginPath(); bgCtx.ellipse(x,y,30*scale,20*scale,0,0,Math.PI*2); bgCtx.fill();
+    }
+    function starfish(x,y,color,scale){
+      bgCtx.fillStyle = color;
+      bgCtx.beginPath();
+      for (let i=0;i<10;i++){
+        const ang = (Math.PI*2*i)/10 - Math.PI/2;
+        const r = (i%2===0) ? 22*scale : 9*scale;
+        const px = x + Math.cos(ang)*r, py = y + Math.sin(ang)*r*0.6;
+        if (i===0) bgCtx.moveTo(px,py); else bgCtx.lineTo(px,py);
+      }
+      bgCtx.closePath(); bgCtx.fill();
+    }
+
+    const n = Math.max(3, Math.floor(W/260));
+    for (let i=0;i<n;i++){
+      const x = (i+0.5)/n * W + (Math.random()*60-30);
+      const y = sandTop + 4;
+      branchCoral(x-30, y, '#6a4c93', 0.9+Math.random()*0.4);
+      fanCoral(x+40, y, i%2? '#e07a5f' : '#3a86ff', 0.8+Math.random()*0.4);
+      brainCoral(x, y+2, '#52b788', 0.7+Math.random()*0.3);
+      if (i%2===0) starfish(x-60, sandTop+18, '#ff7f50', 0.8);
+      if (i%3===0) starfish(x+80, sandTop+22, '#ef476f', 0.7);
+    }
+  }
+  drawBackground();
+  window.addEventListener('resize', () => {
+    W = oceanCanvas.width = window.innerWidth;
+    H = oceanCanvas.height = window.innerHeight;
+    drawBackground();
+  });
+
+  const oceanPalettes = [
+    {body:'#ffd166', stripe:'#073b4c', fin:'#ef476f'},
+    {body:'#4cc9f0', stripe:'#03045e', fin:'#ffd166'},
+    {body:'#ff7f50', stripe:'#4a2c2a', fin:'#ffd166'},
+    {body:'#90e0ef', stripe:'#0077b6', fin:'#f72585'},
+    {body:'#b5e48c', stripe:'#1b4332', fin:'#ffb703'}
+  ];
+  const fishCount = Math.min(14, Math.max(8, Math.floor(W/110)));
+  const fishes = [];
+  for (let i=0;i<fishCount;i++){
+    const depth = Math.random();
+    fishes.push({
+      x: Math.random()*W, y: H*0.15 + Math.random()*H*0.55,
+      angle: Math.random()*Math.PI*2,
+      speed: 0.4 + Math.random()*0.5 + depth*0.3,
+      size: 14 + depth*16, depth,
+      palette: oceanPalettes[i % oceanPalettes.length],
+      wiggle: Math.random()*10, turnBias: (Math.random()-0.5)*0.02, startle: 0, fleeAngle: 0
+    });
+  }
+
+  const oceanPointer = { x: -1000, y: -1000, active:false };
+  oceanCanvas.addEventListener('mousemove', e => { oceanPointer.x=e.clientX; oceanPointer.y=e.clientY; oceanPointer.active=true; });
+  oceanCanvas.addEventListener('mouseleave', () => oceanPointer.active=false);
+  oceanCanvas.addEventListener('touchmove', e => { if (e.touches[0]) { oceanPointer.x=e.touches[0].clientX; oceanPointer.y=e.touches[0].clientY; oceanPointer.active=true; } }, {passive:true});
+
+  const oceanParticles = [];
+  function oceanTouch(x,y){
+    oceanParticles.push({type:'ripple', x, y, r:4, alpha:0.6});
+    for (let i=0;i<6;i++) oceanParticles.push({type:'bubble', x: x+(Math.random()*20-10), y, vy:-0.6-Math.random()*0.8, r:2+Math.random()*3, alpha:0.8});
+    fishes.forEach(f => {
+      const d = Math.hypot(f.x-x, f.y-y);
+      if (d < 70) { f.startle = 60; f.fleeAngle = Math.atan2(f.y-y, f.x-x); }
+    });
+  }
+  oceanCanvas.addEventListener('pointerdown', e => oceanTouch(e.clientX, e.clientY));
+
+  function drawFish(f){
+    octx.save();
+    octx.translate(f.x, f.y);
+    const facing = Math.cos(f.angle) < 0 ? -1 : 1;
+    octx.scale(facing, 1);
+    octx.globalAlpha = 0.55 + f.depth*0.45;
+    const s = f.size;
+    const wag = Math.sin(f.wiggle) * 0.5;
+    octx.fillStyle = f.palette.fin;
+    octx.beginPath();
+    octx.moveTo(-s*0.9, 0);
+    octx.lineTo(-s*1.5, -s*0.5 + wag*s*0.3);
+    octx.lineTo(-s*1.5, s*0.5 + wag*s*0.3);
+    octx.closePath(); octx.fill();
+    octx.fillStyle = f.palette.body;
+    octx.beginPath(); octx.ellipse(0,0, s, s*0.55, 0, 0, Math.PI*2); octx.fill();
+    octx.strokeStyle = f.palette.stripe; octx.lineWidth = Math.max(1.5, s*0.12);
+    octx.beginPath(); octx.moveTo(-s*0.1, -s*0.5); octx.lineTo(-s*0.1, s*0.5); octx.stroke();
+    octx.fillStyle = f.palette.fin;
+    octx.beginPath(); octx.moveTo(-s*0.1, -s*0.5); octx.lineTo(s*0.1, -s*0.95); octx.lineTo(s*0.35, -s*0.45); octx.closePath(); octx.fill();
+    octx.fillStyle = '#fff'; octx.beginPath(); octx.arc(s*0.55, -s*0.08, s*0.14, 0, Math.PI*2); octx.fill();
+    octx.fillStyle = '#111'; octx.beginPath(); octx.arc(s*0.58, -s*0.08, s*0.07, 0, Math.PI*2); octx.fill();
+    octx.restore();
+  }
+
+  function oceanUpdate(){
+    fishes.forEach(f => {
+      f.wiggle += 0.25 + f.speed*0.1;
+      let steer = f.turnBias, speedMul = 1;
+      if (f.startle > 0) {
+        f.startle--; f.angle = f.fleeAngle + (Math.random()-0.5)*0.3; speedMul = 2.4;
+      } else if (oceanPointer.active) {
+        const d = Math.hypot(f.x-oceanPointer.x, f.y-oceanPointer.y);
+        if (d < 160 && d > 70) {
+          const toP = Math.atan2(oceanPointer.y-f.y, oceanPointer.x-f.x);
+          let diff = toP - f.angle; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+          steer += diff * 0.02;
+        } else if (d <= 70) {
+          f.startle = 40; f.fleeAngle = Math.atan2(f.y-oceanPointer.y, f.x-oceanPointer.x);
+        }
+      }
+      f.angle += steer + (Math.random()-0.5)*0.03;
+      const spd = f.speed * speedMul;
+      f.x += Math.cos(f.angle) * spd; f.y += Math.sin(f.angle) * spd;
+      const margin = 40;
+      if (f.x < margin) f.angle = 0;
+      if (f.x > W-margin) f.angle = Math.PI;
+      if (f.y < H*0.1) f.angle = Math.PI/2;
+      if (f.y > H*0.78) f.angle = -Math.PI/2;
+    });
+    for (let i=oceanParticles.length-1;i>=0;i--){
+      const p = oceanParticles[i];
+      if (p.type==='ripple'){ p.r += 2.5; p.alpha -= 0.02; } else { p.y += p.vy; p.alpha -= 0.015; }
+      if (p.alpha <= 0) oceanParticles.splice(i,1);
+    }
+  }
+  function oceanRender(){
+    octx.clearRect(0,0,W,H);
+    octx.drawImage(bgCanvas, 0, 0);
+    fishes.slice().sort((a,b)=>a.depth-b.depth).forEach(drawFish);
+    oceanParticles.forEach(p => {
+      octx.globalAlpha = Math.max(0,p.alpha);
+      if (p.type==='ripple'){ octx.strokeStyle='#ffffff'; octx.lineWidth=2; octx.beginPath(); octx.arc(p.x,p.y,p.r,0,Math.PI*2); octx.stroke(); }
+      else { octx.fillStyle='#ffffff'; octx.beginPath(); octx.arc(p.x,p.y,p.r,0,Math.PI*2); octx.fill(); }
+      octx.globalAlpha = 1;
+    });
+  }
+  function oceanLoop(){ oceanUpdate(); oceanRender(); requestAnimationFrame(oceanLoop); }
+  oceanLoop();
+`;
 
 function renderPage({ id, expiresAt, isOwner, hasPin }) {
   return `<!DOCTYPE html>
@@ -263,16 +685,9 @@ function renderPage({ id, expiresAt, isOwner, hasPin }) {
     --text:#013a63;--text-dim:#4c7690;--accent:#0077b6;--accent2:#0096c7;
   }
   * { box-sizing:border-box; }
-  body { margin:0;font-family:-apple-system,'Segoe UI',Arial,sans-serif;background:linear-gradient(180deg,var(--bg1),var(--bg2) 50%,var(--bg3));color:var(--text);min-height:100vh;overflow-x:hidden; }
-  #ocean { position:fixed;inset:0;overflow:hidden;z-index:0;pointer-events:none; }
-  .bubble { position:absolute;bottom:-40px;border-radius:50%;background:radial-gradient(circle at 30% 30%,rgba(255,255,255,0.9),rgba(255,255,255,0.1));animation:rise linear infinite; }
-  @keyframes rise { 0%{transform:translateY(0) translateX(0);opacity:.8;} 100%{transform:translateY(-110vh) translateX(20px);opacity:0;} }
-  .fish { position:absolute;font-size:28px;animation:swim linear infinite; }
-  @keyframes swim { 0%{transform:translateX(-10vw);} 100%{transform:translateX(110vw);} }
-  .fish.rev { animation-name:swimrev; }
-  @keyframes swimrev { 0%{transform:translateX(110vw) scaleX(-1);} 100%{transform:translateX(-10vw) scaleX(-1);} }
-  .seaweed { position:absolute;bottom:0;font-size:40px;transform-origin:bottom center;animation:sway 4s ease-in-out infinite;opacity:.6; }
-  @keyframes sway { 0%,100%{transform:rotate(-6deg);} 50%{transform:rotate(6deg);} }
+  body { margin:0;font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:var(--text);min-height:100vh;overflow-x:hidden;background:#013a63; }
+  #ocean { position:fixed;inset:0;z-index:0; }
+  #oceanCanvas { position:fixed;inset:0;width:100%;height:100%;z-index:0; }
   .wrap { position:relative;z-index:1;padding:16px;max-width:460px;margin:0 auto; }
   .topbar { display:flex;justify-content:space-between;align-items:center;padding:6px 0; }
   .toggle-btn,.link-btn { background:var(--card-bg);border:1px solid var(--card-border);color:var(--text);border-radius:999px;padding:8px 14px;cursor:pointer;font-size:13px;text-decoration:none; }
@@ -288,16 +703,14 @@ function renderPage({ id, expiresAt, isOwner, hasPin }) {
   .dropzone.drag { border-color:var(--accent);background:rgba(72,202,228,.08); }
   .btn { background:linear-gradient(135deg,var(--accent),var(--accent2));color:#012a4a;border:none;padding:12px 20px;border-radius:12px;cursor:pointer;font-size:15px;font-weight:600;width:100%;margin-top:10px; }
   .btn.secondary { background:var(--card-bg);color:var(--text);border:1px solid var(--card-border); }
-  .btn.danger { background:#ef476f;color:#fff; }
   ul { list-style:none;padding:0;margin:0; }
   li { display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--card-border); }
   li:last-child { border-bottom:none; }
-  .thumb { width:38px;height:38px;border-radius:8px;object-fit:cover;flex-shrink:0; }
   .icon { font-size:24px;width:38px;text-align:center;flex-shrink:0; }
   .fname { flex:1;word-break:break-all;font-size:14px; }
-  a.dl,button.dl { color:var(--accent2);font-weight:600;text-decoration:none;font-size:14px;white-space:nowrap;background:none;border:none;cursor:pointer;font-family:inherit; }
+  button.dl { color:var(--accent2);font-weight:600;text-decoration:none;font-size:14px;white-space:nowrap;background:none;border:none;cursor:pointer;font-family:inherit; }
   textarea { width:100%;min-height:100px;border-radius:12px;border:1px solid var(--card-border);background:rgba(255,255,255,.08);color:var(--text);padding:12px;font-size:14px;resize:vertical; }
-  input[type=text],input[type=password] { width:100%;padding:10px;border-radius:10px;border:1px solid var(--card-border);background:rgba(255,255,255,.08);color:var(--text);font-size:14px; }
+  input[type=password] { width:100%;padding:10px;border-radius:10px;border:1px solid var(--card-border);background:rgba(255,255,255,.08);color:var(--text);font-size:14px; }
   .row { display:flex;gap:10px; }
   .row .btn { margin-top:0; }
   .empty { color:var(--text-dim);font-size:14px;text-align:center;padding:6px 0; }
@@ -306,7 +719,7 @@ function renderPage({ id, expiresAt, isOwner, hasPin }) {
 </style>
 </head>
 <body>
-<div id="ocean"></div>
+<canvas id="oceanCanvas"></canvas>
 <div class="wrap">
   <div class="topbar">
     <a class="link-btn" href="/">🔄 New room</a>
@@ -361,12 +774,7 @@ function renderPage({ id, expiresAt, isOwner, hasPin }) {
 </div>
 
 <script>
-  // ---- Underwater background ----
-  const ocean = document.getElementById('ocean');
-  const fishEmojis = ['🐠','🐟','🐡','🦈','🐬'];
-  for (let i=0;i<6;i++){const f=document.createElement('div');f.className='fish'+(Math.random()>0.5?' rev':'');f.textContent=fishEmojis[i%fishEmojis.length];f.style.top=(10+Math.random()*70)+'vh';f.style.animationDuration=(14+Math.random()*12)+'s';f.style.animationDelay=(-Math.random()*20)+'s';ocean.appendChild(f);}
-  for (let i=0;i<18;i++){const b=document.createElement('div');b.className='bubble';const s=4+Math.random()*12;b.style.width=s+'px';b.style.height=s+'px';b.style.left=Math.random()*100+'vw';b.style.animationDuration=(6+Math.random()*8)+'s';b.style.animationDelay=(-Math.random()*10)+'s';ocean.appendChild(b);}
-  ['🌿','🌱','🪸'].forEach((s,i)=>{const w=document.createElement('div');w.className='seaweed';w.textContent=s;w.style.left=(10+i*35)+'vw';w.style.animationDelay=(i*0.7)+'s';ocean.appendChild(w);});
+${OCEAN_SCRIPT}
 
   // ---- Theme ----
   const themeBtn = document.getElementById('themeToggle');
