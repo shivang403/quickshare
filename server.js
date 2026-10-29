@@ -11,12 +11,10 @@ app.use(express.json({ limit: '1mb' }));
 
 const PORT = process.env.PORT || 3000;
 const ROOMS_DIR = path.join(os.tmpdir(), 'quickshare-rooms');
-const GLOBAL_DIR = path.join(os.tmpdir(), 'quickshare-global');
 const ROOM_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 const STALE_DEVICE_MS = 20 * 1000;
 
 if (!fs.existsSync(ROOMS_DIR)) fs.mkdirSync(ROOMS_DIR, { recursive: true });
-if (!fs.existsSync(GLOBAL_DIR)) fs.mkdirSync(GLOBAL_DIR, { recursive: true });
 
 setInterval(() => {
   for (const room of fs.readdirSync(ROOMS_DIR)) {
@@ -80,122 +78,8 @@ function labelFromUA(ua) {
   return `${browser} on ${osName}`;
 }
 
-// ================= SITE-WIDE ADMIN + APPROVAL GATE =================
-const ADMIN_FILE = path.join(GLOBAL_DIR, 'admin.json');
-const GLOBAL_DEVICES_FILE = path.join(GLOBAL_DIR, 'devices.json');
-
-function initAdmin() {
-  if (fs.existsSync(ADMIN_FILE)) return readJson(ADMIN_FILE, {});
-  const password = process.env.ADMIN_PASSWORD || crypto.randomBytes(4).toString('hex');
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  const admin = { salt, hash, adminToken: crypto.randomBytes(16).toString('hex') };
-  writeJson(ADMIN_FILE, admin);
-  if (!process.env.ADMIN_PASSWORD) {
-    console.log('\n================================================');
-    console.log(' No ADMIN_PASSWORD set. Generated one for you:');
-    console.log(' Admin password: ' + password);
-    console.log(' Log in at /admin — change it there once logged in.');
-    console.log('================================================\n');
-  }
-  return admin;
-}
-const adminState = initAdmin();
-function getAdmin() { return readJson(ADMIN_FILE, adminState); }
-function isAdminReq(req) {
-  const admin = getAdmin();
-  return req.cookies['qs_admin'] === admin.adminToken;
-}
-function getGlobalDevices() { return readJson(GLOBAL_DEVICES_FILE, {}); }
-function saveGlobalDevices(d) { writeJson(GLOBAL_DEVICES_FILE, d); }
-
-function siteGate(req, res, next) {
-  if (isAdminReq(req)) return next(); // owner always allowed
-  let deviceId = req.cookies['qs_site_device'];
-  if (!deviceId) {
-    deviceId = crypto.randomUUID();
-    res.cookie('qs_site_device', deviceId, { httpOnly: true, sameSite: 'lax', maxAge: 365 * 24 * 60 * 60 * 1000 });
-  }
-  const devices = getGlobalDevices();
-  let entry = devices[deviceId];
-  if (!entry) {
-    entry = { status: 'pending', label: labelFromUA(req.headers['user-agent']), ip: req.ip, firstSeen: Date.now() };
-  }
-  entry.lastSeen = Date.now();
-  devices[deviceId] = entry;
-  saveGlobalDevices(devices);
-
-  if (entry.status === 'blocked') return res.send(renderBlockedPage());
-  if (entry.status === 'approved') return next();
-  res.cookie('qs_pending_dest', req.originalUrl, { httpOnly: true, sameSite: 'lax', maxAge: 60 * 60 * 1000 });
-  return res.send(renderPendingPage());
-}
-
-app.get('/site-status', (req, res) => {
-  const deviceId = req.cookies['qs_site_device'];
-  const devices = getGlobalDevices();
-  const entry = devices[deviceId];
-  res.json({ status: entry ? entry.status : 'pending' });
-});
-
-app.get('/admin', (req, res) => {
-  if (!isAdminReq(req)) return res.send(renderAdminLogin());
-  res.send(renderAdminDashboard());
-});
-
-app.post('/admin/login', (req, res) => {
-  const admin = getAdmin();
-  const password = req.body.password || '';
-  const hash = crypto.scryptSync(password, admin.salt, 64).toString('hex');
-  if (hash === admin.hash) {
-    res.cookie('qs_admin', admin.adminToken, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
-    return res.json({ ok: true });
-  }
-  res.status(401).json({ ok: false });
-});
-
-app.post('/admin/change-password', (req, res) => {
-  if (!isAdminReq(req)) return res.status(403).json({ ok: false });
-  const admin = getAdmin();
-  const oldHash = crypto.scryptSync(req.body.oldPassword || '', admin.salt, 64).toString('hex');
-  if (oldHash !== admin.hash) return res.status(401).json({ ok: false, error: 'Wrong current password' });
-  const newPassword = (req.body.newPassword || '').trim();
-  if (!newPassword) return res.status(400).json({ ok: false, error: 'New password required' });
-  admin.salt = crypto.randomBytes(16).toString('hex');
-  admin.hash = crypto.scryptSync(newPassword, admin.salt, 64).toString('hex');
-  admin.adminToken = crypto.randomBytes(16).toString('hex');
-  writeJson(ADMIN_FILE, admin);
-  res.cookie('qs_admin', admin.adminToken, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
-  res.json({ ok: true });
-});
-
-app.get('/admin/devices', (req, res) => {
-  if (!isAdminReq(req)) return res.status(403).json([]);
-  const devices = getGlobalDevices();
-  res.json(Object.entries(devices).map(([deviceId, d]) => ({ deviceId, ...d })));
-});
-
-app.post('/admin/approve', (req, res) => {
-  if (!isAdminReq(req)) return res.status(403).json({ ok: false });
-  const devices = getGlobalDevices();
-  if (devices[req.body.deviceId]) { devices[req.body.deviceId].status = 'approved'; saveGlobalDevices(devices); }
-  res.json({ ok: true });
-});
-app.post('/admin/block', (req, res) => {
-  if (!isAdminReq(req)) return res.status(403).json({ ok: false });
-  const devices = getGlobalDevices();
-  if (devices[req.body.deviceId]) { devices[req.body.deviceId].status = 'blocked'; saveGlobalDevices(devices); }
-  res.json({ ok: true });
-});
-app.post('/admin/unblock', (req, res) => {
-  if (!isAdminReq(req)) return res.status(403).json({ ok: false });
-  const devices = getGlobalDevices();
-  if (devices[req.body.deviceId]) { devices[req.body.deviceId].status = 'approved'; saveGlobalDevices(devices); }
-  res.json({ ok: true });
-});
-
 // ---------- room creation ----------
-app.get('/', siteGate, (req, res) => {
+app.get('/', (req, res) => {
   const id = newRoomId();
   ensureRoom(id);
   const meta = getMeta(id);
@@ -205,7 +89,7 @@ app.get('/', siteGate, (req, res) => {
   res.redirect(`/r/${id}`);
 });
 
-app.get('/r/:id', siteGate, (req, res) => {
+app.get('/r/:id', (req, res) => {
   const { id } = req.params;
   if (!isValidRoom(id)) return res.status(404).send('Room not found');
   ensureRoom(id);
@@ -342,114 +226,6 @@ function pageShell(title, bodyHtml) {
     button{width:100%;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#48cae4,#90e0ef);color:#012a4a;font-weight:700;font-size:15px;cursor:pointer;margin-top:6px;}
     .err{color:#ff8fa3;font-size:13px;min-height:16px;}
   </style></head><body>${bodyHtml}</body></html>`;
-}
-
-function renderPendingPage() {
-  return pageShell('Waiting for approval', `
-  <div class="box">
-    <h2>⏳ Waiting for approval</h2>
-    <p style="color:#a9c6de;font-size:14px;">The site owner needs to approve your device before you can use QuickShare. This page will continue automatically once approved.</p>
-  </div>
-  <script>
-    async function poll(){
-      const res = await fetch('/site-status');
-      const data = await res.json();
-      if (data.status === 'approved') location.reload();
-      else if (data.status === 'blocked') location.reload();
-      else setTimeout(poll, 3000);
-    }
-    poll();
-  </script>`);
-}
-
-function renderBlockedPage() {
-  return pageShell('Blocked', `<div class="box"><h2>🚫 Access blocked</h2><p style="color:#a9c6de;font-size:14px;">The site owner has blocked this device from using QuickShare.</p></div>`);
-}
-
-function renderAdminLogin() {
-  return pageShell('Admin login', `
-  <div class="box">
-    <h2>🔑 Admin login</h2>
-    <input id="password" type="password" placeholder="Admin password" autofocus />
-    <div class="err" id="err"></div>
-    <button id="go">Log in</button>
-  </div>
-  <script>
-    async function submit(){
-      const password = document.getElementById('password').value;
-      const res = await fetch('/admin/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
-      if (res.ok) location.reload(); else document.getElementById('err').textContent = 'Wrong password';
-    }
-    document.getElementById('go').onclick = submit;
-    document.getElementById('password').addEventListener('keydown', e => { if (e.key==='Enter') submit(); });
-  </script>`);
-}
-
-function renderAdminDashboard() {
-  return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Admin - QuickShare</title>
-  <style>
-    body{font-family:-apple-system,Arial,sans-serif;background:#012a4a;color:#eaf4ff;margin:0;padding:20px;}
-    .wrap{max-width:640px;margin:0 auto;}
-    .box{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:16px;padding:18px;margin:14px 0;}
-    h1{font-size:18px;} h2{font-size:15px;color:#90e0ef;margin-bottom:10px;}
-    .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.1);font-size:14px;gap:10px;}
-    .row:last-child{border-bottom:none;}
-    .meta{color:#a9c6de;font-size:12px;}
-    button{border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;font-weight:600;}
-    .approve{background:#48cae4;color:#012a4a;} .block{background:#ef476f;color:#fff;} .unblock{background:#ffd166;color:#333;}
-    input{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.08);color:#fff;margin-right:6px;}
-    .empty{color:#a9c6de;font-size:13px;}
-  </style></head><body><div class="wrap">
-  <h1>🛠️ QuickShare Admin</h1>
-
-  <div class="box">
-    <h2>⏳ Pending approval</h2>
-    <div id="pending"><p class="empty">Loading...</p></div>
-  </div>
-  <div class="box">
-    <h2>✅ Approved devices</h2>
-    <div id="approved"><p class="empty">Loading...</p></div>
-  </div>
-  <div class="box">
-    <h2>🚫 Blocked devices</h2>
-    <div id="blocked"><p class="empty">Loading...</p></div>
-  </div>
-  <div class="box">
-    <h2>Change admin password</h2>
-    <input id="oldPw" type="password" placeholder="Current password" />
-    <input id="newPw" type="password" placeholder="New password" />
-    <button class="approve" id="changePw">Update</button>
-    <div id="pwMsg" style="font-size:13px;margin-top:8px;"></div>
-  </div>
-  </div>
-  <script>
-    function fmt(t){ return t ? new Date(t).toLocaleTimeString() : '-'; }
-    async function load(){
-      const res = await fetch('/admin/devices');
-      const devices = await res.json();
-      const pending = devices.filter(d=>d.status==='pending');
-      const approved = devices.filter(d=>d.status==='approved');
-      const blocked = devices.filter(d=>d.status==='blocked');
-      document.getElementById('pending').innerHTML = pending.length ? pending.map(d=>row(d,['approve','block'])).join('') : '<p class="empty">None</p>';
-      document.getElementById('approved').innerHTML = approved.length ? approved.map(d=>row(d,['block'])).join('') : '<p class="empty">None</p>';
-      document.getElementById('blocked').innerHTML = blocked.length ? blocked.map(d=>row(d,['unblock'])).join('') : '<p class="empty">None</p>';
-    }
-    function row(d, actions){
-      const btns = actions.map(a => '<button class="'+a+'" onclick="act(\\''+a+'\\',\\''+d.deviceId+'\\')">'+a[0].toUpperCase()+a.slice(1)+'</button>').join(' ');
-      return '<div class="row"><div>'+d.label+'<div class="meta">'+ (d.ip||'') +' · last seen '+fmt(d.lastSeen)+'</div></div><div>'+btns+'</div></div>';
-    }
-    window.act = async (action, deviceId) => {
-      await fetch('/admin/'+action, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId})});
-      load();
-    };
-    document.getElementById('changePw').onclick = async () => {
-      const oldPassword = document.getElementById('oldPw').value, newPassword = document.getElementById('newPw').value;
-      const res = await fetch('/admin/change-password', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({oldPassword,newPassword})});
-      const data = await res.json();
-      document.getElementById('pwMsg').textContent = data.ok ? '✅ Password updated' : ('❌ ' + (data.error||'Failed'));
-    };
-    load(); setInterval(load, 4000);
-  </script></body></html>`;
 }
 
 function renderPinGate(id) {
