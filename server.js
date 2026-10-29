@@ -473,7 +473,7 @@ function renderPinGate(id) {
 }
 
 const OCEAN_SCRIPT = `
-  // ===== Interactive coral reef background =====
+  // ===== Interactive underwater ecosystem =====
   const oceanCanvas = document.getElementById('oceanCanvas');
   const octx = oceanCanvas.getContext('2d');
   let W = oceanCanvas.width = window.innerWidth;
@@ -484,51 +484,70 @@ const OCEAN_SCRIPT = `
   function drawBackground(){
     bgCanvas.width = W; bgCanvas.height = H;
     const grad = bgCtx.createLinearGradient(0,0,0,H);
-    grad.addColorStop(0, '#0a6ea8');
-    grad.addColorStop(0.55, '#0d5c96');
+    grad.addColorStop(0, '#0a7bb8');
+    grad.addColorStop(0.5, '#0b5c96');
+    grad.addColorStop(0.82, '#0a4574');
     grad.addColorStop(1, '#e8d9a8');
     bgCtx.fillStyle = grad; bgCtx.fillRect(0,0,W,H);
 
     bgCtx.save();
-    bgCtx.globalAlpha = 0.10;
-    for (let i=0;i<5;i++){
-      const x = (i/5)*W + 40;
+    bgCtx.globalAlpha = 0.09;
+    for (let i=0;i<6;i++){
+      const x = (i/6)*W + 40;
       bgCtx.beginPath();
-      bgCtx.moveTo(x, 0); bgCtx.lineTo(x+120, 0);
-      bgCtx.lineTo(x-60, H*0.7); bgCtx.lineTo(x-180, H*0.7);
+      bgCtx.moveTo(x, 0); bgCtx.lineTo(x+130, 0);
+      bgCtx.lineTo(x-60, H*0.78); bgCtx.lineTo(x-200, H*0.78);
       bgCtx.closePath(); bgCtx.fillStyle = '#ffffff'; bgCtx.fill();
     }
     bgCtx.restore();
 
     const sandTop = H*0.82;
-    bgCtx.fillStyle = '#e8d9a8';
+    const sand = bgCtx.createLinearGradient(0, sandTop, 0, H);
+    sand.addColorStop(0, '#d9c58f'); sand.addColorStop(1, '#efe2b8');
+    bgCtx.fillStyle = sand;
     bgCtx.beginPath(); bgCtx.moveTo(0, sandTop);
     for (let x=0;x<=W;x+=40) bgCtx.lineTo(x, sandTop + Math.sin(x*0.02)*8);
     bgCtx.lineTo(W,H); bgCtx.lineTo(0,H); bgCtx.closePath(); bgCtx.fill();
 
+    // rocks
+    for (let i=0;i<Math.max(3,Math.floor(W/320));i++){
+      const rx = Math.random()*W, ry = sandTop + 6 + Math.random()*20, rw = 30+Math.random()*50;
+      const rg = bgCtx.createRadialGradient(rx-rw*0.2, ry-rw*0.3, 2, rx, ry, rw);
+      rg.addColorStop(0, '#8a8f98'); rg.addColorStop(1, '#4a4e57');
+      bgCtx.fillStyle = rg;
+      bgCtx.beginPath(); bgCtx.ellipse(rx, ry, rw, rw*0.45, 0, Math.PI, 0); bgCtx.fill();
+    }
+
     function branchCoral(x,y,color,scale){
-      bgCtx.strokeStyle = color; bgCtx.lineWidth = 4*scale; bgCtx.lineCap='round';
+      bgCtx.strokeStyle = color; bgCtx.lineCap='round';
       function branch(x1,y1,angle,len,depth){
         if (depth<=0) return;
         const x2 = x1 + Math.cos(angle)*len, y2 = y1 + Math.sin(angle)*len;
+        bgCtx.lineWidth = Math.max(1.5, depth*1.6*scale);
         bgCtx.beginPath(); bgCtx.moveTo(x1,y1); bgCtx.lineTo(x2,y2); bgCtx.stroke();
-        branch(x2,y2, angle - 0.4 - Math.random()*0.2, len*0.72, depth-1);
-        branch(x2,y2, angle + 0.4 + Math.random()*0.2, len*0.72, depth-1);
+        branch(x2,y2, angle - 0.45 - Math.random()*0.2, len*0.74, depth-1);
+        branch(x2,y2, angle + 0.45 + Math.random()*0.2, len*0.74, depth-1);
       }
-      branch(x,y,-Math.PI/2, 32*scale, 4);
+      branch(x,y,-Math.PI/2, 34*scale, 5);
     }
     function fanCoral(x,y,color,scale){
-      bgCtx.fillStyle = color; bgCtx.globalAlpha = 0.85;
-      bgCtx.beginPath();
-      for (let a=-1.1;a<=1.1;a+=0.15){
-        const r = 40*scale*(0.85+0.15*Math.sin(a*5));
+      const g = bgCtx.createRadialGradient(x, y-30*scale, 4, x, y-20*scale, 46*scale);
+      g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0.35)');
+      bgCtx.fillStyle = g; bgCtx.globalAlpha = 0.92;
+      bgCtx.beginPath(); bgCtx.moveTo(x,y);
+      for (let a=-1.2;a<=1.2;a+=0.12){
+        const r = 44*scale*(0.85+0.15*Math.sin(a*9));
         bgCtx.lineTo(x + Math.cos(a-Math.PI/2)*r, y + Math.sin(a-Math.PI/2)*r);
       }
       bgCtx.closePath(); bgCtx.fill(); bgCtx.globalAlpha = 1;
     }
     function brainCoral(x,y,color,scale){
-      bgCtx.fillStyle = color;
-      bgCtx.beginPath(); bgCtx.ellipse(x,y,30*scale,20*scale,0,0,Math.PI*2); bgCtx.fill();
+      const g = bgCtx.createRadialGradient(x-8*scale, y-10*scale, 2, x, y, 34*scale);
+      g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,40,30,0.7)');
+      bgCtx.fillStyle = g;
+      bgCtx.beginPath(); bgCtx.ellipse(x,y,32*scale,22*scale,0,Math.PI,0); bgCtx.fill();
+      bgCtx.strokeStyle = 'rgba(0,0,0,0.18)'; bgCtx.lineWidth = 1;
+      for (let k=0;k<5;k++){ bgCtx.beginPath(); bgCtx.arc(x, y, (8+k*5)*scale, Math.PI*1.1, Math.PI*1.9); bgCtx.stroke(); }
     }
     function starfish(x,y,color,scale){
       bgCtx.fillStyle = color;
@@ -542,15 +561,16 @@ const OCEAN_SCRIPT = `
       bgCtx.closePath(); bgCtx.fill();
     }
 
-    const n = Math.max(3, Math.floor(W/260));
+    const n = Math.max(3, Math.floor(W/230));
     for (let i=0;i<n;i++){
       const x = (i+0.5)/n * W + (Math.random()*60-30);
-      const y = sandTop + 4;
-      branchCoral(x-30, y, '#6a4c93', 0.9+Math.random()*0.4);
-      fanCoral(x+40, y, i%2? '#e07a5f' : '#3a86ff', 0.8+Math.random()*0.4);
-      brainCoral(x, y+2, '#52b788', 0.7+Math.random()*0.3);
-      if (i%2===0) starfish(x-60, sandTop+18, '#ff7f50', 0.8);
-      if (i%3===0) starfish(x+80, sandTop+22, '#ef476f', 0.7);
+      const y = sandTop + 6;
+      branchCoral(x-34, y, '#8d5fd3', 0.9+Math.random()*0.4);
+      fanCoral(x+44, y, i%2? '#f08a5d' : '#4d9de0', 0.8+Math.random()*0.4);
+      brainCoral(x, y+4, '#59c188', 0.7+Math.random()*0.3);
+      branchCoral(x+90, y, '#ff7b9c', 0.7+Math.random()*0.3);
+      if (i%2===0) starfish(x-66, sandTop+22, '#ff7f50', 0.8);
+      if (i%3===0) starfish(x+84, sandTop+26, '#ef476f', 0.7);
     }
   }
   drawBackground();
@@ -561,13 +581,13 @@ const OCEAN_SCRIPT = `
   });
 
   const oceanPalettes = [
-    {top:'#ffb703', bottom:'#fb8500', fin:'#e85d04', accent:'#f77f00'},   // yellow tang
-    {top:'#00b4d8', bottom:'#023e8a', fin:'#0077b6', accent:'#90e0ef'},   // blue surgeonfish
-    {top:'#e5383b', bottom:'#6a040f', fin:'#f48c06', accent:'#ffba08'},   // clownfish-ish red/orange
-    {top:'#2a9d8f', bottom:'#264653', fin:'#e9c46a', accent:'#f4a261'},   // parrotfish teal
-    {top:'#ffd60a', bottom:'#dda15e', fin:'#bc6c25', accent:'#606c38'}    // yellow/olive reef fish
+    {top:'#ffb703', bottom:'#fb8500', fin:'#e85d04', accent:'#f77f00'},
+    {top:'#00b4d8', bottom:'#023e8a', fin:'#0077b6', accent:'#90e0ef'},
+    {top:'#e5383b', bottom:'#6a040f', fin:'#f48c06', accent:'#ffba08'},
+    {top:'#2a9d8f', bottom:'#264653', fin:'#e9c46a', accent:'#f4a261'},
+    {top:'#ffd60a', bottom:'#dda15e', fin:'#bc6c25', accent:'#606c38'}
   ];
-  const fishCount = Math.min(13, Math.max(7, Math.floor(W/130)));
+  const fishCount = Math.min(11, Math.max(6, Math.floor(W/150)));
   const fishes = [];
   for (let i=0;i<fishCount;i++){
     const depth = Math.random();
@@ -593,12 +613,14 @@ const OCEAN_SCRIPT = `
   }
 
   const oceanPointer = { x: -1000, y: -1000, active:false };
+  var ecoScare = { x: -1000, y: -1000, t: 0 };
   oceanCanvas.addEventListener('mousemove', e => { oceanPointer.x=e.clientX; oceanPointer.y=e.clientY; oceanPointer.active=true; });
   oceanCanvas.addEventListener('mouseleave', () => oceanPointer.active=false);
   oceanCanvas.addEventListener('touchmove', e => { if (e.touches[0]) { oceanPointer.x=e.touches[0].clientX; oceanPointer.y=e.touches[0].clientY; oceanPointer.active=true; } }, {passive:true});
 
   const oceanParticles = [];
   function oceanTouch(x,y){
+    ecoScare.x = x; ecoScare.y = y; ecoScare.t = 70;
     oceanParticles.push({type:'ripple', x, y, r:4, alpha:0.6});
     for (let i=0;i<6;i++) oceanParticles.push({type:'bubble', x: x+(Math.random()*20-10), y, vy:-0.6-Math.random()*0.8, r:2+Math.random()*3, alpha:0.8});
     fishes.forEach(f => {
@@ -627,7 +649,6 @@ const OCEAN_SCRIPT = `
     const s = f.size;
     const wag = Math.sin(f.wiggle) * 0.45;
 
-    // tail fin (forked), pivots at body rear
     octx.save();
     octx.translate(-s*0.95, 0);
     octx.rotate(wag * 0.5);
@@ -641,7 +662,6 @@ const OCEAN_SCRIPT = `
     octx.closePath(); octx.fill();
     octx.restore();
 
-    // body with vertical gradient (countershading: lighter top, deeper color belly)
     const grad = octx.createLinearGradient(0, -s*0.5, 0, s*0.5);
     grad.addColorStop(0, f.palette.top);
     grad.addColorStop(1, f.palette.bottom);
@@ -650,31 +670,26 @@ const OCEAN_SCRIPT = `
     octx.lineWidth = Math.max(1, s*0.04);
     octx.strokeStyle = 'rgba(0,0,0,0.15)'; octx.stroke();
 
-    // vertical accent bands (like a reef fish's stripes)
     octx.save();
     fishBodyPath(s); octx.clip();
     octx.strokeStyle = f.palette.accent; octx.globalAlpha *= 0.55; octx.lineWidth = s*0.09;
     for (const bx of [-s*0.4, 0, s*0.4]) { octx.beginPath(); octx.moveTo(bx, -s*0.5); octx.lineTo(bx, s*0.5); octx.stroke(); }
     octx.restore();
 
-    // dorsal fin
     octx.fillStyle = f.palette.fin;
     octx.beginPath();
     octx.moveTo(-s*0.15, -s*0.46); octx.quadraticCurveTo(s*0.05, -s*0.95, s*0.3, -s*0.4);
     octx.quadraticCurveTo(s*0.05, -s*0.5, -s*0.15, -s*0.46);
     octx.closePath(); octx.fill();
 
-    // pectoral fin
     octx.beginPath();
     octx.moveTo(s*0.15, s*0.15); octx.quadraticCurveTo(s*0.1, s*0.55, -s*0.15, s*0.35);
     octx.quadraticCurveTo(s*0.0, s*0.25, s*0.15, s*0.15);
     octx.closePath(); octx.globalAlpha *= 0.85; octx.fill(); octx.globalAlpha = 0.6 + f.depth*0.4;
 
-    // gill line
     octx.strokeStyle = 'rgba(0,0,0,0.25)'; octx.lineWidth = s*0.03;
     octx.beginPath(); octx.moveTo(s*0.55, -s*0.32); octx.quadraticCurveTo(s*0.48, 0, s*0.55, s*0.3); octx.stroke();
 
-    // eye
     octx.fillStyle = '#fff'; octx.beginPath(); octx.arc(s*0.78, -s*0.06, s*0.11, 0, Math.PI*2); octx.fill();
     octx.fillStyle = '#111'; octx.beginPath(); octx.arc(s*0.81, -s*0.06, s*0.055, 0, Math.PI*2); octx.fill();
     octx.restore();
@@ -689,7 +704,6 @@ const OCEAN_SCRIPT = `
     const s = f.size;
     const wag = Math.sin(f.wiggle*0.6) * 0.3;
 
-    // tail (heterocercal: larger upper lobe)
     octx.save();
     octx.translate(-s*1.05, 0);
     octx.rotate(wag * 0.35);
@@ -703,7 +717,6 @@ const OCEAN_SCRIPT = `
     octx.closePath(); octx.fill();
     octx.restore();
 
-    // body: torpedo shape, countershaded gray
     const grad = octx.createLinearGradient(0, -s*0.42, 0, s*0.42);
     grad.addColorStop(0, '#7d8e96');
     grad.addColorStop(0.55, '#4a5a61');
@@ -718,24 +731,20 @@ const OCEAN_SCRIPT = `
     octx.closePath();
     octx.fillStyle = grad; octx.fill();
 
-    // dorsal fin (the iconic triangle)
     octx.fillStyle = '#4a5a61';
     octx.beginPath();
     octx.moveTo(s*0.05, -s*0.38); octx.quadraticCurveTo(s*0.25, -s*0.95, s*0.5, -s*0.36);
     octx.quadraticCurveTo(s*0.25, -s*0.42, s*0.05, -s*0.38);
     octx.closePath(); octx.fill();
 
-    // pectoral fin
     octx.beginPath();
     octx.moveTo(s*0.35, s*0.1); octx.quadraticCurveTo(s*0.25, s*0.55, -s*0.15, s*0.3);
     octx.quadraticCurveTo(s*0.1, s*0.25, s*0.35, s*0.1);
     octx.closePath(); octx.globalAlpha *= 0.9; octx.fill(); octx.globalAlpha = 0.5 + f.depth*0.5;
 
-    // gill slits
     octx.strokeStyle = 'rgba(0,0,0,0.3)'; octx.lineWidth = s*0.025;
     for (const gx of [0.62, 0.72, 0.82]) { octx.beginPath(); octx.moveTo(s*gx, -s*0.22); octx.lineTo(s*(gx-0.03), s*0.05); octx.stroke(); }
 
-    // eye
     octx.fillStyle = '#111'; octx.beginPath(); octx.arc(s*1.05, -s*0.1, s*0.045, 0, Math.PI*2); octx.fill();
     octx.restore();
   }
@@ -779,10 +788,171 @@ const OCEAN_SCRIPT = `
       if (p.alpha <= 0) oceanParticles.splice(i,1);
     }
   }
+
+  // ===== Ecosystem layer: kelp, jellyfish, schooling fish, drifting particles, shimmer =====
+  let ecoTime = 0;
+  const kelp = [];
+  function initKelp(){
+    kelp.length = 0;
+    const n = Math.max(7, Math.floor(W/110));
+    for (let i=0;i<n;i++){
+      kelp.push({ x: (i+Math.random()*0.8)/n*W, h: H*(0.22+Math.random()*0.32), phase: Math.random()*6,
+                  w: 5+Math.random()*5, front: i%3===0, hue: 110+Math.random()*35 });
+    }
+  }
+  initKelp();
+  window.addEventListener('resize', initKelp);
+
+  function drawKelp(front){
+    const base = H*0.84;
+    kelp.forEach(k => {
+      if (k.front !== front) return;
+      const seg = 12;
+      octx.lineCap = 'round';
+      let px = k.x, py = base;
+      for (let i=1;i<=seg;i++){
+        const t = i/seg;
+        const x = k.x + Math.sin(ecoTime*0.9 + k.phase + t*2.4) * t * (front?30:20);
+        const y = base - t*k.h;
+        octx.strokeStyle = 'hsla(' + k.hue + ',55%,' + (front?24:32) + '%,' + (front?0.9:0.7) + ')';
+        octx.lineWidth = k.w * (1 - t*0.7);
+        octx.beginPath(); octx.moveTo(px,py); octx.lineTo(x,y); octx.stroke();
+        if (i%3===0){ // leaf blades
+          octx.fillStyle = 'hsla(' + k.hue + ',60%,' + (front?30:38) + '%,0.75)';
+          octx.beginPath(); octx.ellipse(x + (i%2?10:-10), y, 11, 3.5, (i%2?0.5:-0.5) + Math.sin(ecoTime+i)*0.2, 0, Math.PI*2); octx.fill();
+        }
+        px = x; py = y;
+      }
+    });
+  }
+
+  const jellies = [];
+  for (let i=0;i<(W>700?4:2);i++){
+    jellies.push({ x: Math.random()*W, y: H*0.2 + Math.random()*H*0.4, phase: Math.random()*6,
+                   size: 20 + Math.random()*16, hue: 290 + Math.random()*60, vx: 0, boost: 0 });
+  }
+  function drawJelly(j){
+    const pulse = 0.5 + 0.5*Math.sin(ecoTime*(2 + j.boost*3) + j.phase);
+    const bw = j.size*(1 + pulse*0.12), bh = j.size*(0.8 - pulse*0.18);
+    octx.save(); octx.translate(j.x, j.y);
+    // tentacles
+    octx.lineCap = 'round';
+    for (let i=0;i<7;i++){
+      const tx = (i-3)*bw*0.28;
+      octx.strokeStyle = 'hsla(' + j.hue + ',80%,80%,0.35)'; octx.lineWidth = 1.6;
+      octx.beginPath(); octx.moveTo(tx, 0);
+      for (let s=1;s<=8;s++) octx.lineTo(tx + Math.sin(ecoTime*2 + i + s*0.7 + j.phase)*5*s*0.25, s*bh*0.55);
+      octx.stroke();
+    }
+    // bell
+    const g = octx.createRadialGradient(0, -bh*0.4, 2, 0, 0, bw);
+    g.addColorStop(0, 'hsla(' + j.hue + ',90%,85%,0.85)');
+    g.addColorStop(1, 'hsla(' + j.hue + ',80%,60%,0.25)');
+    octx.fillStyle = g;
+    octx.beginPath(); octx.ellipse(0, 0, bw, bh, 0, Math.PI, 0); octx.quadraticCurveTo(0, bh*0.35, -bw, 0); octx.fill();
+    octx.restore();
+  }
+
+  const schools = [];
+  for (let s=0;s<2;s++){
+    const members = [];
+    const n = W>700 ? 16 : 9;
+    const cx = Math.random()*W, cy = H*0.25 + Math.random()*H*0.4;
+    for (let i=0;i<n;i++) members.push({ x: cx+(Math.random()-0.5)*80, y: cy+(Math.random()-0.5)*50, vx: 1, vy: 0 });
+    schools.push({ tx: cx, ty: cy, ta: Math.random()*6.28, members });
+  }
+  function updateSchools(){
+    schools.forEach(sc => {
+      sc.ta += (Math.random()-0.5)*0.05;
+      sc.tx += Math.cos(sc.ta)*1.1; sc.ty += Math.sin(sc.ta)*0.7;
+      if (sc.tx < 60) sc.ta = 0; if (sc.tx > W-60) sc.ta = Math.PI;
+      if (sc.ty < H*0.12) sc.ta = Math.PI/2; if (sc.ty > H*0.7) sc.ta = -Math.PI/2;
+      sc.members.forEach((m, i) => {
+        const ox = Math.cos(i*2.4)*(18+ (i%4)*10), oy = Math.sin(i*1.7)*(12+(i%3)*8);
+        m.vx += (sc.tx + ox - m.x)*0.006 + (Math.random()-0.5)*0.12;
+        m.vy += (sc.ty + oy - m.y)*0.006 + (Math.random()-0.5)*0.12;
+        const threats = [];
+        if (oceanPointer.active) threats.push([oceanPointer.x, oceanPointer.y, 110, 0.35]);
+        if (ecoScare.t > 0) threats.push([ecoScare.x, ecoScare.y, 200, 0.9]);
+        threats.forEach(([tx,ty,r,force]) => {
+          const dx = m.x-tx, dy = m.y-ty, d = Math.hypot(dx,dy);
+          if (d < r && d > 0.1) { m.vx += dx/d*force; m.vy += dy/d*force; }
+        });
+        const sp = Math.hypot(m.vx,m.vy), max = 3.2;
+        if (sp > max) { m.vx = m.vx/sp*max; m.vy = m.vy/sp*max; }
+        m.vx *= 0.97; m.vy *= 0.97;
+        m.x += m.vx; m.y += m.vy;
+      });
+    });
+    if (ecoScare.t > 0) ecoScare.t--;
+  }
+  function drawSchools(){
+    schools.forEach(sc => sc.members.forEach(m => {
+      const a = Math.atan2(m.vy, m.vx);
+      octx.save(); octx.translate(m.x, m.y); octx.rotate(a);
+      octx.globalAlpha = 0.85;
+      const g = octx.createLinearGradient(0,-3,0,3); g.addColorStop(0,'#5d7fa3'); g.addColorStop(0.5,'#dfeaf2'); g.addColorStop(1,'#ffffff');
+      octx.fillStyle = g;
+      octx.beginPath(); octx.ellipse(0,0,6,2.4,0,0,Math.PI*2); octx.fill();
+      octx.fillStyle = '#c4d6e4';
+      octx.beginPath(); octx.moveTo(-5,0); octx.lineTo(-9.5,-2.6 + Math.sin(ecoTime*14 + m.x)*0.8); octx.lineTo(-9.5,2.6 + Math.sin(ecoTime*14 + m.x)*0.8); octx.closePath(); octx.fill();
+      octx.fillStyle = '#0a1a24'; octx.beginPath(); octx.arc(3.6,-0.5,0.7,0,Math.PI*2); octx.fill();
+      octx.restore();
+    }));
+  }
+
+  const snow = [];
+  for (let i=0;i<50;i++) snow.push({ x: Math.random()*W, y: Math.random()*H, r: 0.8+Math.random()*1.6, v: 0.15+Math.random()*0.35, ph: Math.random()*6 });
+  function drawSnow(){
+    octx.fillStyle = 'rgba(255,255,255,0.35)';
+    snow.forEach(p => {
+      p.y += p.v; p.x += Math.sin(ecoTime*0.6 + p.ph)*0.25;
+      if (p.y > H*0.84) { p.y = -5; p.x = Math.random()*W; }
+      octx.beginPath(); octx.arc(p.x, p.y, p.r, 0, Math.PI*2); octx.fill();
+    });
+  }
+
+  function drawShimmer(){
+    const sandTop = H*0.82;
+    for (let i=0;i<9;i++){
+      const x = ((i*190 + ecoTime*14) % (W+200)) - 100;
+      const a = 0.04 + 0.04*Math.sin(ecoTime*1.3 + i);
+      octx.fillStyle = 'rgba(255,255,255,' + a + ')';
+      octx.beginPath(); octx.ellipse(x, sandTop + 26 + (i%3)*16, 70, 5, 0, 0, Math.PI*2); octx.fill();
+    }
+  }
+
+  function ecoUpdate(){
+    ecoTime += 0.016;
+    updateSchools();
+    jellies.forEach(j => {
+      j.y += Math.sin(ecoTime*0.8 + j.phase)*0.35 - 0.12;
+      j.x += Math.sin(ecoTime*0.3 + j.phase)*0.25 + j.vx;
+      j.vx *= 0.96; j.boost *= 0.97;
+      if (j.y < H*0.08) j.y = H*0.72; if (j.y > H*0.78) j.y = H*0.1;
+      if (j.x < -40) j.x = W+40; if (j.x > W+40) j.x = -40;
+      if (oceanPointer.active) {
+        const dx = j.x-oceanPointer.x, dy = j.y-oceanPointer.y, d = Math.hypot(dx,dy);
+        if (d < 120) { j.vx += dx/d*0.12; j.y += dy/d*0.8; j.boost = 1; }
+      }
+      if (ecoScare.t > 60) { j.boost = 1; j.vx += (j.x-ecoScare.x>0?1:-1)*0.5; }
+    });
+  }
+
   function oceanRender(){
     octx.clearRect(0,0,W,H);
     octx.drawImage(bgCanvas, 0, 0);
+    drawShimmer();
+    drawKelp(false);
+    jellies.forEach(drawJelly);
+    drawSchools();
     fishes.slice().sort((a,b)=>a.depth-b.depth).forEach(drawFish);
+    drawKelp(true);
+    drawSnow();
+    // depth haze
+    const haze = octx.createLinearGradient(0,0,0,H);
+    haze.addColorStop(0,'rgba(5,70,120,0)'); haze.addColorStop(0.6,'rgba(5,70,120,0.10)'); haze.addColorStop(1,'rgba(5,70,120,0)');
+    octx.fillStyle = haze; octx.fillRect(0,0,W,H);
     oceanParticles.forEach(p => {
       octx.globalAlpha = Math.max(0,p.alpha);
       if (p.type==='ripple'){ octx.strokeStyle='#ffffff'; octx.lineWidth=2; octx.beginPath(); octx.arc(p.x,p.y,p.r,0,Math.PI*2); octx.stroke(); }
@@ -790,7 +960,7 @@ const OCEAN_SCRIPT = `
       octx.globalAlpha = 1;
     });
   }
-  function oceanLoop(){ oceanUpdate(); oceanRender(); requestAnimationFrame(oceanLoop); }
+  function oceanLoop(){ oceanUpdate(); ecoUpdate(); oceanRender(); requestAnimationFrame(oceanLoop); }
   oceanLoop();
 `;
 
@@ -812,11 +982,10 @@ function renderPage({ id, expiresAt, isOwner, hasPin }) {
   }
   * { box-sizing:border-box; }
   body { margin:0;font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:var(--text);min-height:100vh;overflow-x:hidden;background:#013a63; }
-  #ocean { position:fixed;inset:0;z-index:0; }
   #oceanCanvas { position:fixed;inset:0;width:100%;height:100%;z-index:0; }
   .wrap { position:relative;z-index:1;padding:24px 32px 60px;max-width:1200px;margin:0 auto; }
   .topbar { display:flex;justify-content:space-between;align-items:center;padding:6px 0 20px; }
-  .brand { font-size:20px;font-weight:800;letter-spacing:-0.02em;display:flex;align-items:center;gap:8px; }
+  .brand { font-size:20px;font-weight:800;letter-spacing:-0.02em;display:flex;align-items:center;gap:8px;text-shadow:0 2px 8px rgba(0,0,0,.3); }
   .toggle-btn,.link-btn { background:var(--card-bg);border:1px solid var(--card-border);color:var(--text);border-radius:999px;padding:9px 16px;cursor:pointer;font-size:13px;text-decoration:none;backdrop-filter:blur(8px); }
   .grid { display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:24px;align-items:start; }
   .col { display:flex;flex-direction:column;gap:24px; }
@@ -828,7 +997,7 @@ function renderPage({ id, expiresAt, isOwner, hasPin }) {
   #qrcode img, #qrcode canvas { border-radius:10px;background:#fff;padding:8px; }
   .url { font-size:12px;color:var(--text-dim);word-break:break-all;text-align:center;margin-top:10px; }
   .timer { text-align:center;font-size:13px;color:var(--text-dim);margin-top:6px; }
-  .warn { background:rgba(255,193,7,.15);border:1px solid rgba(255,193,7,.4);color:#ffd166;padding:10px;border-radius:10px;font-size:13px;margin-bottom:10px; }
+  .warn { background:rgba(255,193,7,.15);border:1px solid rgba(255,193,7,.4);color:#ffd166;padding:10px;border-radius:10px;font-size:13px; }
   .dropzone { border:2px dashed var(--card-border);border-radius:14px;padding:28px 16px;text-align:center;color:var(--text-dim);cursor:pointer;font-size:14px; }
   .dropzone.drag { border-color:var(--accent);background:rgba(72,202,228,.08); }
   .btn { background:linear-gradient(135deg,var(--accent),var(--accent2));color:#012a4a;border:none;padding:12px 20px;border-radius:12px;cursor:pointer;font-size:15px;font-weight:600;width:100%;margin-top:10px; }
@@ -929,7 +1098,7 @@ ${OCEAN_SCRIPT}
   // ---- E2EE key: lives ONLY in the URL fragment, never sent to the server ----
   function b64urlFromBytes(bytes){return btoa(String.fromCharCode(...bytes)).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');}
   function bytesFromB64url(str){str=str.replace(/-/g,'+').replace(/_/g,'/');while(str.length%4)str+='=';return Uint8Array.from(atob(str),c=>c.charCodeAt(0));}
-  function toB64(bytes){return btoa(String.fromCharCode(...bytes));}
+  function toB64(bytes){let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192));return btoa(s);}
   function fromB64(str){return Uint8Array.from(atob(str),c=>c.charCodeAt(0));}
 
   let cryptoKey = null;
@@ -951,7 +1120,8 @@ ${OCEAN_SCRIPT}
   }
   function renderQR(){
     document.getElementById('shareUrl').textContent = location.href;
-    new QRCode(document.getElementById('qrcode'), { text: location.href, width: 220, height: 220 });
+    try { new QRCode(document.getElementById('qrcode'), { text: location.href, width: 220, height: 220 }); }
+    catch(e) { document.getElementById('qrcode').innerHTML = '<p class="empty">QR code could not load — copy the link below instead.</p>'; }
   }
   async function encryptBytes(bytes){
     const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -1009,6 +1179,7 @@ ${OCEAN_SCRIPT}
   const manifestCache = {};
   const ICONS = {'.pdf':'📄','.doc':'📝','.docx':'📝','.txt':'📄','.zip':'🗜️','.rar':'🗜️','.xls':'📊','.xlsx':'📊','.csv':'📊','.ppt':'📽️','.pptx':'📽️','.mp3':'🎵','.wav':'🎵','.mp4':'🎬','.mov':'🎬','.apk':'📱'};
   function extOf(name){const i=name.lastIndexOf('.');return i>=0?name.slice(i).toLowerCase():'';}
+  function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   let fileInterval;
   async function refreshFiles(){
     if (!cryptoKey) return;
@@ -1030,7 +1201,7 @@ ${OCEAN_SCRIPT}
     }
     list.innerHTML = items.map(f => {
       const icon = (f.type||'').startsWith('image/') ? '🖼️' : (ICONS[extOf(f.name)] || '📁');
-      return '<li><div class="icon">'+icon+'</div><span class="fname">'+f.name+'</span><button class="dl" onclick="downloadFile(\\''+f.stored+'\\')">Download</button></li>';
+      return '<li><div class="icon">'+icon+'</div><span class="fname">'+esc(f.name)+'</span><button class="dl" onclick="downloadFile(\\''+f.stored+'\\')">Download</button></li>';
     }).join('');
   }
   window.downloadFile = async (stored) => {
